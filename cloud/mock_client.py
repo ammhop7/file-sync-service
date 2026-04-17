@@ -11,6 +11,7 @@ from typing import Dict, Any
 from loguru import logger
 
 from cloud.base import BaseCloudClient
+from exceptions import CloudUploadError, CloudDeleteError
 
 
 class MockCloudClient(BaseCloudClient):

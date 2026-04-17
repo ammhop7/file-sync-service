@@ -11,6 +11,8 @@ from typing import NamedTuple
 from dotenv import load_dotenv
 from loguru import logger
 
+from exceptions import ConfigurationError
+
 
 class Config(NamedTuple):
     """Configuration container with validated settings."""
@@ -19,6 +21,7 @@ class Config(NamedTuple):
     api_token: str
     sync_interval: int
     log_file_path: str
+    cloud_client_type: str
 
 
 def load_config() -> Config:
@@ -38,6 +41,7 @@ def load_config() -> Config:
     api_token = _get_required_env("API_TOKEN")
     sync_interval = _get_required_env("SYNC_INTERVAL")
     log_file = os.getenv("LOG_FILE_PATH", "sync_service.log")
+    cloud_client_type = os.getenv("CLOUD_CLIENT_TYPE", "mock")
 
     local_path = _validate_local_folder(local_folder)
     interval = _validate_sync_interval(sync_interval)
@@ -48,25 +52,30 @@ def load_config() -> Config:
         remote_folder_name=remote_folder,
         api_token=api_token,
         sync_interval=interval,
-        log_file_path=log_file
+        log_file_path=log_file,
+        cloud_client_type=cloud_client_type
     )
 
 
 def _get_required_env(key: str) -> str:
     """
-    Get required environment variable or exit with error.
+    Get required environment variable or raise error.
 
     Args:
         key: Environment variable name
 
     Returns:
         str: Environment variable value
+
+    Raises:
+        ConfigurationError: If environment variable is missing
     """
     value = os.getenv(key)
     if not value:
-        logger.error(f"Missing required environment variable: {key}")
-        logger.error("Please check your .env file")
-        sys.exit(1)
+        raise ConfigurationError(
+            f"Missing required environment variable: {key}. "
+            f"Please check your .env file"
+        )
     return value
 
 
@@ -79,16 +88,17 @@ def _validate_local_folder(path: str) -> Path:
 
     Returns:
         Path: Validated Path object
+
+    Raises:
+        ConfigurationError: If folder doesn't exist or is not a directory
     """
     folder_path = Path(path).resolve()
 
     if not folder_path.exists():
-        logger.error(f"Local folder does not exist: {folder_path}")
-        sys.exit(1)
+        raise ConfigurationError(f"Local folder does not exist: {folder_path}")
 
     if not folder_path.is_dir():
-        logger.error(f"Path is not a directory: {folder_path}")
-        sys.exit(1)
+        raise ConfigurationError(f"Path is not a directory: {folder_path}")
 
     return folder_path
 
@@ -102,16 +112,21 @@ def _validate_sync_interval(interval: str) -> int:
 
     Returns:
         int: Validated interval in seconds
+
+    Raises:
+        ConfigurationError: If interval is invalid
     """
     try:
         interval_int = int(interval)
     except ValueError:
-        logger.error(f"SYNC_INTERVAL must be an integer, got: {interval}")
-        sys.exit(1)
+        raise ConfigurationError(
+            f"SYNC_INTERVAL must be an integer, got: {interval}"
+        )
 
     if interval_int <= 0:
-        logger.error(f"SYNC_INTERVAL must be positive, got: {interval_int}")
-        sys.exit(1)
+        raise ConfigurationError(
+            f"SYNC_INTERVAL must be positive, got: {interval_int}"
+        )
 
     return interval_int
 
@@ -122,7 +137,11 @@ def _validate_api_token(token: str) -> None:
 
     Args:
         token: API token string
+
+    Raises:
+        ConfigurationError: If token is invalid
     """
     if token in ("your_api_token_here", ""):
-        logger.error("Invalid API_TOKEN: Please set a valid token in .env file")
-        sys.exit(1)
+        raise ConfigurationError(
+            "Invalid API_TOKEN: Please set a valid token in .env file"
+        )

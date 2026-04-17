@@ -11,6 +11,13 @@ import requests
 from loguru import logger
 
 from cloud.base import BaseCloudClient
+from exceptions import (
+    CloudAuthenticationError,
+    CloudConnectionError,
+    CloudTimeoutError,
+    CloudUploadError,
+    CloudDeleteError
+)
 
 
 class CloudClient(BaseCloudClient):
@@ -21,6 +28,10 @@ class CloudClient(BaseCloudClient):
     All cloud-specific logic is isolated here for easy extensibility.
     """
 
+    # Timeout constants
+    CONNECTION_TIMEOUT = 10  # seconds
+    UPLOAD_TIMEOUT = 30  # seconds
+
     def __init__(self, token: str, remote_folder: str):
         """
         Initialize cloud client with authentication.
@@ -28,6 +39,10 @@ class CloudClient(BaseCloudClient):
         Args:
             token: API authentication token
             remote_folder: Name of the remote folder to sync with
+
+        Raises:
+            CloudAuthenticationError: If authentication fails
+            CloudConnectionError: If connection to cloud service fails
         """
         self.token = token
         self.remote_folder = remote_folder
@@ -45,28 +60,41 @@ class CloudClient(BaseCloudClient):
         Validate API token and connection to cloud service.
 
         Raises:
-            SystemExit: If token is invalid or connection fails
+            CloudAuthenticationError: If token is invalid
+            CloudConnectionError: If connection fails
+            CloudTimeoutError: If request times out
         """
         try:
             response = requests.get(
                 f"{self.base_url}/auth/validate",
                 headers=self.headers,
-                timeout=10
+                timeout=self.CONNECTION_TIMEOUT
             )
 
             if response.status_code == 401:
-                logger.error("Invalid API token - authentication failed")
-                raise SystemExit(1)
+                raise CloudAuthenticationError(
+                    "Invalid API token - authentication failed"
+                )
 
             if response.status_code != 200:
-                logger.error(f"Cloud service connection failed: {response.status_code}")
-                raise SystemExit(1)
+                raise CloudConnectionError(
+                    f"Cloud service connection failed with status {response.status_code}"
+                )
 
             logger.info("Cloud connection validated successfully")
 
+        except requests.exceptions.Timeout as e:
+            raise CloudTimeoutError(
+                f"Connection validation timed out after {self.CONNECTION_TIMEOUT}s: {e}"
+            )
+        except requests.exceptions.ConnectionError as e:
+            raise CloudConnectionError(
+                f"Failed to connect to cloud service: {e}"
+            )
         except requests.exceptions.RequestException as e:
-            logger.error(f"Failed to connect to cloud service: {e}")
-            raise SystemExit(1)
+            raise CloudConnectionError(
+                f"Request failed during connection validation: {e}"
+            )
 
     def load(self, file_path: str) -> bool:
         """
@@ -91,18 +119,30 @@ class CloudClient(BaseCloudClient):
                     headers={"Authorization": f"Bearer {self.token}"},
                     files=files,
                     data=data,
-                    timeout=30
+                    timeout=self.UPLOAD_TIMEOUT
                 )
 
             if response.status_code in (200, 201):
                 logger.info(f"Uploaded: {filename}")
                 return True
 
-            logger.error(f"Upload failed for {filename}: {response.status_code}")
+            logger.error(f"Upload failed for {filename}: HTTP {response.status_code}")
             return False
 
+        except requests.exceptions.Timeout:
+            logger.error(f"Upload timeout for {file_path} after {self.UPLOAD_TIMEOUT}s")
+            return False
+        except requests.exceptions.ConnectionError as e:
+            logger.error(f"Connection error uploading {file_path}: {e}")
+            return False
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Request error uploading {file_path}: {e}")
+            return False
+        except FileNotFoundError:
+            logger.error(f"File not found: {file_path}")
+            return False
         except Exception as e:
-            logger.error(f"Error uploading {file_path}: {e}")
+            logger.error(f"Unexpected error uploading {file_path}: {e}")
             return False
 
     def reload(self, file_path: str) -> bool:
@@ -131,18 +171,30 @@ class CloudClient(BaseCloudClient):
                     headers={"Authorization": f"Bearer {self.token}"},
                     files=files,
                     data=data,
-                    timeout=30
+                    timeout=self.UPLOAD_TIMEOUT
                 )
 
             if response.status_code == 200:
                 logger.info(f"Re-uploaded: {filename}")
                 return True
 
-            logger.error(f"Re-upload failed for {filename}: {response.status_code}")
+            logger.error(f"Re-upload failed for {filename}: HTTP {response.status_code}")
             return False
 
+        except requests.exceptions.Timeout:
+            logger.error(f"Re-upload timeout for {file_path} after {self.UPLOAD_TIMEOUT}s")
+            return False
+        except requests.exceptions.ConnectionError as e:
+            logger.error(f"Connection error re-uploading {file_path}: {e}")
+            return False
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Request error re-uploading {file_path}: {e}")
+            return False
+        except FileNotFoundError:
+            logger.error(f"File not found: {file_path}")
+            return False
         except Exception as e:
-            logger.error(f"Error re-uploading {file_path}: {e}")
+            logger.error(f"Unexpected error re-uploading {file_path}: {e}")
             return False
 
     def delete(self, filename: str) -> bool:
@@ -160,18 +212,27 @@ class CloudClient(BaseCloudClient):
                 f"{self.base_url}/files/{filename}",
                 headers=self.headers,
                 params={'folder': self.remote_folder},
-                timeout=10
+                timeout=self.CONNECTION_TIMEOUT
             )
 
             if response.status_code in (200, 204):
                 logger.info(f"Deleted: {filename}")
                 return True
 
-            logger.error(f"Deletion failed for {filename}: {response.status_code}")
+            logger.error(f"Deletion failed for {filename}: HTTP {response.status_code}")
             return False
 
+        except requests.exceptions.Timeout:
+            logger.error(f"Delete timeout for {filename} after {self.CONNECTION_TIMEOUT}s")
+            return False
+        except requests.exceptions.ConnectionError as e:
+            logger.error(f"Connection error deleting {filename}: {e}")
+            return False
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Request error deleting {filename}: {e}")
+            return False
         except Exception as e:
-            logger.error(f"Error deleting {filename}: {e}")
+            logger.error(f"Unexpected error deleting {filename}: {e}")
             return False
 
     def get_info(self) -> Dict[str, Any]:
@@ -186,11 +247,11 @@ class CloudClient(BaseCloudClient):
                 f"{self.base_url}/files",
                 headers=self.headers,
                 params={'folder': self.remote_folder},
-                timeout=10
+                timeout=self.CONNECTION_TIMEOUT
             )
 
             if response.status_code != 200:
-                logger.error(f"Failed to get remote file info: {response.status_code}")
+                logger.error(f"Failed to get remote file info: HTTP {response.status_code}")
                 return {}
 
             files_data = response.json().get('files', [])
@@ -208,6 +269,15 @@ class CloudClient(BaseCloudClient):
 
             return file_info
 
+        except requests.exceptions.Timeout:
+            logger.error(f"Timeout getting remote file info after {self.CONNECTION_TIMEOUT}s")
+            return {}
+        except requests.exceptions.ConnectionError as e:
+            logger.error(f"Connection error getting remote file info: {e}")
+            return {}
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Request error getting remote file info: {e}")
+            return {}
         except Exception as e:
-            logger.error(f"Error getting remote file info: {e}")
+            logger.error(f"Unexpected error getting remote file info: {e}")
             return {}

@@ -11,9 +11,9 @@ from datetime import datetime
 from loguru import logger
 
 from config import load_config
-from cloud.cloud_client import CloudClient
-from cloud.mock_client import MockCloudClient
+from cloud.factory import CloudClientFactory
 from sync_service import SyncService
+from exceptions import ConfigurationError
 
 
 def setup_logging(log_file_path: str) -> None:
@@ -64,8 +64,9 @@ def main() -> None:
     logger.info("=" * 60)
 
     try:
-        # Initialize cloud client (use MockCloudClient for local testing)
-        cloud_client = MockCloudClient(
+        # Initialize cloud client using factory (Dependency Inversion)
+        cloud_client = CloudClientFactory.create(
+            client_type=config.cloud_client_type,
             token=config.api_token,
             remote_folder=config.remote_folder_name
         )
@@ -85,6 +86,9 @@ def main() -> None:
     except KeyboardInterrupt:
         logger.info("Service stopped by user")
         sys.exit(0)
+    except ConfigurationError as e:
+        logger.error(f"Configuration error: {e}")
+        sys.exit(1)
     except Exception as e:
         logger.error(f"Fatal error: {e}")
         sys.exit(1)
